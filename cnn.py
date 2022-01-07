@@ -8,6 +8,7 @@ class CNN:
         self.filter_size = 3
         # create a 2d array to initialize filter
         self.filter_1 = np.asarray([[1 for x in range(self.filter_size)] for y in range(self.filter_size)])
+        # self.filter_2 = np.arange(9).reshape((3,3))
         self.filter_2 = np.asarray([[1 for x in range(self.filter_size)] for y in range(self.filter_size)])
         self.data = []
         self.params = {
@@ -32,13 +33,30 @@ class CNN:
         arr[type] = 1
         return arr
     
-    def convolution(self, input, filter):
-        h, w = input.shape
-        output = np.zeros((h - 2, w - 2))
-        for i in range(h - 2):
-            for j in range(w - 2):
-                temp_region = input[i:(i + 3), j:(j + 3)]   # index i+3 is not including, i.e. i~i+2
-                output[i][j] = np.sum(temp_region * filter)
+    def convolution(self, in_1, in_2):
+        h1, w1 = in_1.shape
+        h2, w2 = in_2.shape
+        output = np.zeros((h1-h2+1, w1-w2+1))   # the size after doing convolution
+        for i in range(h1-h2+1):
+            for j in range(w1-w2+1):
+                temp_region = in_1[i:(i + h2), j:(j + w2)]   # index i+3 is not including, i.e. i~i+2
+                output[i][j] = np.sum(temp_region * in_2)
+        return output
+
+    def full_convolution(self, in_1_, in_2):
+        h1_, w1_ = in_1_.shape
+        in_1 = np.zeros((h1_+4, w1_+4)) # initialize the padding array
+        for i in range(h1_):
+            for j in range(w1_):
+                in_1[i+2][j+2] = in_1_[i][j]    # padding 0 with 2 dim of each side (cuz filter size is 3)
+        # below are same as normal convolution
+        h1, w1 = in_1.shape
+        h2, w2 = in_2.shape
+        output = np.zeros((h1-h2+1, w1-w2+1))   # the size after doing convolution
+        for i in range(h1-h2+1):
+            for j in range(w1-w2+1):
+                temp_region = in_1[i:(i + h2), j:(j + w2)]   # index i+3 is not including, i.e. i~i+2
+                output[i][j] = np.sum(temp_region * in_2)
         return output
     
     def maxpool(self, input):
@@ -49,6 +67,18 @@ class CNN:
                 temp_region = input[(2*i):(2*i+2), (2*j):(2*j+2)]
                 output[i][j] = np.amax(temp_region)
         return output
+
+    def maxpool_backprop(self, input, prop_grad):
+        h, w = input.shape
+        grad_arr = np.zeros((h, w))
+        for i in range(h//2):
+            for j in range(w//2):
+                temp_region = input[(2*i):(2*i+2), (2*j):(2*j+2)]
+                for k in range(2):  # check which element is the max, and repalce it with prop_grad
+                    for m in range(2):
+                        if(temp_region[k][m] == np.amax(temp_region)):
+                            grad_arr[2*i+k][2*j+m] = prop_grad[i][j]
+        return grad_arr
 
     def forward_pass(self, input):
         params = self.params
@@ -96,10 +126,31 @@ class CNN:
         # propagate gradient (gradient of FC_A0)
         prop_grad = np.dot(params['W1'].T, prop_grad) * 1   # 1, cuz FC_A0 doesn't have activation function (just flatten the pooling)
         # change the prop_grad into pooling layer size (i.e. a 2d gradient array)
-        prop_grad = prop_grad.reshape(params['P2'].shape)   # 6*6
-        print(prop_grad)
+        prop_grad = prop_grad.reshape(params['P2'].shape)   # 6*6 (gradient of P2)
 
-        return change_w
+# -------------------------------------------
+        # propagate gradient to the layer before maxpool (gradient of Z2)
+        prop_grad = self.maxpool_backprop(params['A2'], prop_grad)  # the size before doing maxpool (by fill in 0 to the right position)
+
+        # Calculate filter 2 update
+        change_filter_2 = self.convolution(params['P1'], prop_grad)
+        print('--- filter 2 gradient ---')
+        print(change_filter_2)
+        # propagate gradient (gradient of P1)
+        prop_grad = self.full_convolution(prop_grad, np.flip(self.filter_2))    # 15*15
+
+# -------------------------------------------
+        # propagate gradient to the layer before maxpool (gradient of Z1)
+        prop_grad = self.maxpool_backprop(params['A1'], prop_grad)
+
+        # Calculate filter 1 update
+        change_filter_1 = self.convolution(params['A0'], prop_grad)
+        print('--- filter 1 gradient ---')
+        print(change_filter_1)
+        # propagate gradient (gradient of A0)
+        prop_grad = self.full_convolution(prop_grad, np.flip(self.filter_1))    # 32*32 (end of the back propagation)
+
+        return change_w, change_filter_2, change_filter_1
     
     def relu_2d(self, x, derivative=False):
         row, col = x.shape
@@ -142,6 +193,7 @@ if __name__ == '__main__':
     label = cnn.one_hot_label(type)
     output = cnn.forward_pass(cnn.data)
     initial_grad = cnn.softmax_CE_grad(label, output)
-    # print(output)
+    print('--- forward pass output ---')
+    print(output)
     # print(initial_grad)
     cnn.backpropagation(initial_grad)
